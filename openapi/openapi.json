@@ -1,0 +1,551 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Express API for URL Shortener",
+    "version": "1.0.0",
+    "description": "REST API built with Express.js, Prisma, Upstash Redis, and Zod. Shortens URLs, redirects with cache-aside Redis, and supports soft-deactivate. Create/delete require an API key (`x-api-key`)."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Configured BASE_URL"
+    },
+    {
+      "url": "http://localhost:3001",
+      "description": "DEV server (local)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "URLs",
+      "description": "Create, inspect, deactivate, and redirect short URLs"
+    },
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "API key required for create and deactivate endpoints"
+      }
+    },
+    "schemas": {
+      "UrlResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "shortCode": {
+            "type": "string",
+            "example": "aB3xY9k"
+          },
+          "shortUrl": {
+            "type": "string",
+            "format": "uri",
+            "example": "http://localhost:3001/aB3xY9k"
+          },
+          "longUrl": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://example.com/very/long/path"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-03-23T05:30:00.000Z"
+          },
+          "expiresAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "example": "2026-12-31T23:59:59.000Z"
+          },
+          "isActive": {
+            "type": "boolean",
+            "example": true
+          },
+          "clickCount": {
+            "type": "integer",
+            "minimum": 0,
+            "example": 0
+          }
+        },
+        "required": [
+          "id",
+          "shortCode",
+          "shortUrl",
+          "longUrl",
+          "createdAt",
+          "expiresAt",
+          "isActive",
+          "clickCount"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "integer",
+            "example": 400
+          },
+          "message": {
+            "type": "string",
+            "example": "longUrl must be a valid http(s) URL"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          }
+        },
+        "required": [
+          "statusCode",
+          "message",
+          "requestId"
+        ]
+      },
+      "CreateUrlRequest": {
+        "type": "object",
+        "properties": {
+          "longUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Destination URL (http or https only)",
+            "example": "https://example.com/very/long/path"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional ISO-8601 expiry; must be in the future",
+            "example": "2026-12-31T23:59:59.000Z"
+          }
+        },
+        "required": [
+          "longUrl"
+        ],
+        "additionalProperties": false
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "status",
+          "timestamp"
+        ]
+      },
+      "ReadyResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ]
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              },
+              "redis": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down"
+                ]
+              }
+            },
+            "required": [
+              "database",
+              "redis"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "status",
+          "checks",
+          "timestamp"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/v1/urls": {
+      "post": {
+        "tags": [
+          "URLs"
+        ],
+        "summary": "Create Short URL",
+        "description": "Validate longUrl, generate a random 7-character Base62 short code, store in PostgreSQL, and warm Upstash Redis cache. Requires API key. Rate limited more strictly than other routes (per IP).",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "required": false,
+            "description": "Optional client-supplied request ID for log correlation. If omitted, the server generates a UUID.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUrlRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Short URL created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many create requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/urls/{shortCode}": {
+      "get": {
+        "tags": [
+          "URLs"
+        ],
+        "summary": "Get URL Metadata",
+        "description": "Returns metadata for an active, non-expired short URL. Public (no API key).",
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "required": false,
+            "description": "Optional client-supplied request ID for log correlation. If omitted, the server generates a UUID.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[0-9A-Za-z]+$",
+              "description": "Base62 short code (1–16 chars)",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "Base62 short code (1–16 chars)",
+            "name": "shortCode",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "URL metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid short code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, inactive, or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "URLs"
+        ],
+        "summary": "Deactivate Short URL",
+        "description": "Soft-disables the URL (`is_active = false`) and deletes the Upstash cache key. Requires API key.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "required": false,
+            "description": "Optional client-supplied request ID for log correlation. If omitted, the server generates a UUID.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[0-9A-Za-z]+$",
+              "description": "Base62 short code (1–16 chars)",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "Base62 short code (1–16 chars)",
+            "name": "shortCode",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "URL deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Already inactive or missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{shortCode}": {
+      "get": {
+        "tags": [
+          "URLs"
+        ],
+        "summary": "Redirect Short URL",
+        "description": "Resolve via Upstash Redis (HIT) or PostgreSQL (MISS + cache-aside). Returns 302. Public (no API key).",
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "required": false,
+            "description": "Optional client-supplied request ID for log correlation. If omitted, the server generates a UUID.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[0-9A-Za-z]+$",
+              "description": "Base62 short code (1–16 chars)",
+              "example": "aB3xY9k"
+            },
+            "required": true,
+            "description": "Base62 short code (1–16 chars)",
+            "name": "shortCode",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to long URL",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                },
+                "description": "Destination long URL"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid short code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, inactive, or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness Probe",
+        "description": "Process is up. Does not check database or Redis.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Readiness Probe",
+        "description": "Checks PostgreSQL and Upstash Redis.",
+        "responses": {
+          "200": {
+            "description": "Ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
