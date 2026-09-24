@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Url {
+  id         String    @id @default(uuid()) @db.Uuid
+  shortCode  String    @unique @map("short_code") @db.VarChar(16)
+  longUrl    String    @map("long_url") @db.Text
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz(6)
+  clickCount BigInt    @default(0) @map("click_count")
+  isActive   Boolean   @default(true) @map("is_active")
+
+  @@map("urls")
+}
