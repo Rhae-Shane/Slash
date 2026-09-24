@@ -5,6 +5,7 @@ Standalone Express service (Prisma + PostgreSQL + Upstash Redis).
 Design docs:
 - Assignment brief (API + schema only): [DESIGN-BRIEF.md](./DESIGN-BRIEF.md)
 - Full design: [DESIGN.md](./DESIGN.md)
+- Diagrams (copy/paste for video): [docs/DIAGRAMS.md](./docs/DIAGRAMS.md)
 
 ## Stack
 

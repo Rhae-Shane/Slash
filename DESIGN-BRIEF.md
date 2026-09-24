@@ -124,4 +124,6 @@ In short: **PK = `id` for permanence; `short_code` = unique alias for redirects.
 
 ---
 
+*Diagrams for the video / whiteboard: [docs/DIAGRAMS.md](./docs/DIAGRAMS.md) (Images 2 + 3 cover this brief).*
+
 *Full implementation notes (cache, auth, edge cases): see [DESIGN.md](./DESIGN.md).*
