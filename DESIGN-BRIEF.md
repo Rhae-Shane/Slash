@@ -1,6 +1,30 @@
-# URL Shortener — Design Brief
+# URL Shortener — Written Design Doc
 
-Simplified URL shortener: take a long URL, generate a short unique alias, redirect visits to the original URL.
+**Objective:** Design a simplified URL shortener (like Bit.ly / TinyURL) that takes a long URL, generates a short unique alias, and redirects visits to the original long URL.
+
+## Live demo (test here)
+
+| | |
+|---|---|
+| **Service** | https://slash-w6yj.onrender.com |
+| **API docs (Stoplight)** | https://slash-w6yj.onrender.com/api-docs |
+| **Health** | https://slash-w6yj.onrender.com/health |
+| **Ready (DB + Redis)** | https://slash-w6yj.onrender.com/ready |
+| **OpenAPI JSON** | https://slash-w6yj.onrender.com/openapi.json |
+| **Repo** | https://github.com/Rhae-Shane/Slash |
+
+> Free Render tier may cold-start (~30–60s) on first request after idle.
+
+**Quick create example** (replace `YOUR_API_KEY`):
+
+```bash
+curl -s -X POST https://slash-w6yj.onrender.com/api/v1/urls \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d "{\"longUrl\":\"https://example.com/very/long/path\"}"
+```
+
+Then open the returned `shortUrl` in a browser to see the **302 redirect**.
 
 ---
 
@@ -33,7 +57,7 @@ Simplified URL shortener: take a long URL, generate a short unique alias, redire
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "shortCode": "aB3xY9k",
-  "shortUrl": "http://localhost:3001/aB3xY9k",
+  "shortUrl": "https://slash-w6yj.onrender.com/aB3xY9k",
   "longUrl": "https://example.com/very/long/path",
   "createdAt": "2026-09-23T06:18:51.309Z",
   "expiresAt": "2026-12-31T23:59:59.000Z",
@@ -48,7 +72,7 @@ Simplified URL shortener: take a long URL, generate a short unique alias, redire
 | `shortUrl` | Full short link clients can share |
 | `longUrl` | Original URL that was shortened |
 
-**Errors:** `400` invalid body; `401` if API key is required and missing/invalid.
+**Errors:** `400` invalid body; `401` if API key is missing/invalid (writes are protected).
 
 ---
 
@@ -60,7 +84,7 @@ Simplified URL shortener: take a long URL, generate a short unique alias, redire
 | **Path** | `/:shortCode` |
 | **Request body** | none |
 
-**Example:** `GET /aB3xY9k`
+**Example:** `GET https://slash-w6yj.onrender.com/aB3xY9k`
 
 **Success response — `302 Found`**
 
@@ -112,9 +136,9 @@ CREATE TABLE urls (
 
 **Index:** `UNIQUE (short_code)` for fast, conflict-safe lookups on redirect.
 
-### Primary key: why `id` (not `short_code`)?
+### Primary key: which field, and why?
 
-We use **`id` (UUID) as the primary key** because:
+We use **`id` (UUID) as the primary key**, not `short_code`, because:
 
 1. **Stable internal identity** — the row keeps one ID forever, even if the public alias were ever rotated or regenerated.
 2. **Separation of concerns** — users type `short_code`; the system joins analytics and future relations on `id`.
@@ -124,6 +148,4 @@ In short: **PK = `id` for permanence; `short_code` = unique alias for redirects.
 
 ---
 
-*Diagrams for the video / whiteboard: [docs/DIAGRAMS.md](./docs/DIAGRAMS.md) (Images 2 + 3 cover this brief).*
-
-*Full implementation notes (cache, auth, edge cases): see [DESIGN.md](./DESIGN.md).*
+*Diagrams: [docs/DIAGRAMS.md](./docs/DIAGRAMS.md) · Full implementation notes: [DESIGN.md](./DESIGN.md)*
